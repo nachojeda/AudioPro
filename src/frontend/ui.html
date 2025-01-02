@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Full Spectrum Audio Spectrogram</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            width: 95vw;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            padding: 15px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #startButton { background-color: #4CAF50; color: white; }
+        #stopButton { background-color: #f44336; color: white; }
+        #clearButton { background-color: #ff9800; color: white; }
+        #exportButton { background-color: #2196F3; color: white; }
+
+        #status {
+            padding: 5px 10px;
+            border-radius: 4px;
+            background: #333;
+        }
+
+        .visualization-wrapper {
+            position: relative;
+            margin: 80px;
+            display: flex;
+            gap: 20px;
+            height: 70vh;
+        }
+
+        .spectrogram-container {
+            position: relative;
+            flex-grow: 1;
+            display: flex;
+            margin-left: 80px;
+            margin-bottom: 40px;
+        }
+
+        .canvas-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            border-radius: 5px;
+        }
+
+        .y-axis {
+            position: absolute;
+            left: -80px;
+            height: 100%;
+            width: 70px;
+            pointer-events: none;
+        }
+
+        .y-axis-label {
+            position: absolute;
+            right: 10px;
+            transform: translateY(-50%);
+            color: #aaa;
+            font-size: 12px;
+        }
+
+        .x-axis {
+            position: absolute;
+            bottom: -30px;
+            left: 0;
+            width: 100%;
+            height: 20px;
+            pointer-events: none;
+        }
+
+        .x-axis-label {
+            position: absolute;
+            transform: translateX(-50%);
+            color: #aaa;
+            font-size: 12px;
+        }
+
+        .db-scale {
+            width: 60px;
+            height: 100%;
+            position: relative;
+            display: flex;
+            align-items: stretch;
+        }
+
+        .db-gradient {
+            width: 20px;
+            height: 100%;
+            background: linear-gradient(to bottom,
+                #ff0000 0%,
+                #ff8800 20%,
+                #ffff00 40%,
+                #00ff00 60%,
+                #0000ff 80%,
+                #000066 100%
+            );
+            border-radius: 3px;
+        }
+
+        .db-labels {
+            flex-grow: 1;
+            position: relative;
+            margin-left: 10px;
+        }
+
+        .db-label {
+            position: absolute;
+            right: 0;
+            transform: translateY(-50%);
+            color: #aaa;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid #333;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            z-index: 1000;
+        }
+
+        .grid-lines {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="controls">
+            <button id="startButton">Start Recording</button>
+            <button id="stopButton" disabled>Stop Recording</button>
+            <button id="clearButton">Clear History</button>
+            <button id="exportButton">Export Image</button>
+            <span id="status">Status: Ready</span>
+        </div>
+
+        <div class="visualization-wrapper">
+            <div class="spectrogram-container">
+                <div class="y-axis"></div>
+                <div class="canvas-container">
+                    <div class="grid-lines"></div>
+                    <canvas id="spectrogramCanvas"></canvas>
+                    <div class="x-axis"></div>
+                </div>
+                <div class="tooltip"></div>
+            </div>
+            <div class="db-scale">
+                <div class="db-gradient"></div>
+                <div class="db-labels"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class SpectrogramVisualizer {
+            constructor() {
+                this.setupElements();
+                this.initializeState();
+                this.setupCanvas();
+                this.setupEventListeners();
+                this.createAxes();
+            }
+
+            setupElements() {
+                this.canvas = document.getElementById('spectrogramCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.tooltip = document.querySelector('.tooltip');
+                
+                this.buttons = {
+                    start: document.getElementById('startButton'),
+                    stop: document.getElementById('stopButton'),
+                    clear: document.getElementById('clearButton'),
+                    export: document.getElementById('exportButton')
+                };
+                
+                this.status = document.getElementById('status');
+            }
+
+            initializeState() {
+                this.spectrogramData = [];
+                this.isRecording = false;
+                this.freqInfo = null;
+                this.maxHistoryLength = 167; // Approximately 5 seconds (167 * 0.03s = 5.01s)
+            }
+
+            setupCanvas() {
+                const resize = () => {
+                    const container = this.canvas.parentElement;
+                    this.canvas.width = container.clientWidth;
+                    this.canvas.height = container.clientHeight;
+                    this.redraw();
+                };
+                
+                window.addEventListener('resize', resize);
+                resize();
+            }
+
+            createAxes() {
+                // Frequency axis
+                const yAxis = document.querySelector('.y-axis');
+                yAxis.innerHTML = '';
+                
+                const freqPoints = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+                freqPoints.forEach(freq => {
+                    const label = document.createElement('div');
+                    label.className = 'y-axis-label';
+                    label.textContent = freq >= 1000 ? `${freq/1000}k` : freq;
+                    const position = this.frequencyToY(freq) / this.canvas.height * 100;
+                    label.style.top = `${position}%`;
+                    yAxis.appendChild(label);
+                });
+
+                // Time axis
+                const xAxis = document.querySelector('.x-axis');
+                xAxis.innerHTML = '';
+                
+                for (let i = 0; i <= 5; i++) {
+                    const label = document.createElement('div');
+                    label.className = 'x-axis-label';
+                    label.textContent = `${i}s`;
+                    label.style.left = `${(i/5) * 100}%`;
+                    xAxis.appendChild(label);
+                }
+
+                // dB scale
+                const dbLabels = document.querySelector('.db-labels');
+                dbLabels.innerHTML = '';
+                
+                for (let db = 0; db >= -120; db -= 20) {
+                    const label = document.createElement('div');
+                    label.className = 'db-label';
+                    label.textContent = `${db} dB`;
+                    label.style.top = `${((-db)/120) * 100}%`;
+                    dbLabels.appendChild(label);
+                }
+
+                // Grid lines
+                const gridLines = document.querySelector('.grid-lines');
+                gridLines.innerHTML = '';
+                
+                // Frequency grid lines
+                freqPoints.forEach(freq => {
+                    const line = document.createElement('div');
+                    line.style.position = 'absolute';
+                    line.style.left = '0';
+                    line.style.width = '100%';
+                    line.style.height = '1px';
+                    line.style.background = 'rgba(255, 255, 255, 0.1)';
+                    line.style.top = `${this.frequencyToY(freq) / this.canvas.height * 100}%`;
+                    gridLines.appendChild(line);
+                });
+
+                // Time grid lines
+                for (let i = 0; i <= 5; i++) {
+                    const line = document.createElement('div');
+                    line.style.position = 'absolute';
+                    line.style.top = '0';
+                    line.style.width = '1px';
+                    line.style.height = '100%';
+                    line.style.background = 'rgba(255, 255, 255, 0.1)';
+                    line.style.left = `${(i/5) * 100}%`;
+                    gridLines.appendChild(line);
+                }
+            }
+
+            frequencyToY(freq) {
+                const minFreq = 20;
+                const maxFreq = this.freqInfo?.freqMax || 20000;
+                const logMin = Math.log10(minFreq);
+                const logMax = Math.log10(maxFreq);
+                const logFreq = Math.log10(Math.max(freq, minFreq));
+                
+                return this.canvas.height * (1 - (logFreq - logMin) / (logMax - logMin));
+            }
+
+            connectWebSocket() {
+                this.ws = new WebSocket('ws://localhost:8000/ws');
+                
+                this.ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    this.ws.send('start');
+                };
+
+                this.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    if (message.type === 'audio_data') {
+                        if (!this.freqInfo && message.freq_info) {
+                            this.freqInfo = message.freq_info;
+                        }
+                        this.updateSpectrogram(message.data);
+                    }
+                };
+
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.status.textContent = 'Error: Connection failed';
+                    this.stopRecording();
+                };
+            }
+
+            updateSpectrogram(newData) {
+                this.spectrogramData.push(newData);
+                if (this.spectrogramData.length > this.maxHistoryLength) {
+                    this.spectrogramData.shift();
+                }
+                this.redraw();
+            }
+
+            redraw() {
+                if (!this.spectrogramData.length) return;
+
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                const columnWidth = this.canvas.width / this.maxHistoryLength;
+
+                this.spectrogramData.forEach((column, x) => {
+                    column.forEach((value, y) => {
+                        const freq = (y / column.length) * (this.freqInfo?.freqMax || 20000);
+                        const yPos = this.frequencyToY(freq);
+                        
+                        const nextFreq = ((y + 1) / column.length) * (this.freqInfo?.freqMax || 20000);
+                        const nextY = this.frequencyToY(nextFreq);
+                        
+                        this.ctx.fillStyle = this.getColor(value);
+                        this.ctx.fillRect(
+                            x * columnWidth,
+                            yPos,
+                            columnWidth + 1,
+                            Math.max(1, yPos - nextY)
+                        );
+                    });
+                });
+            }
+
+            getColor(value) {
+                const hue = (1 - value) * 240;
+                return `hsl(${hue}, 100%, ${value * 50}%)`;
+            }
+
+            setupEventListeners() {
+                this.buttons.start.onclick = () => this.startRecording();
+                this.buttons.stop.onclick = () => this.stopRecording();
+                this.buttons.clear.onclick = () => {
+                    if (confirm('Clear spectrogram history?')) {
+                        this.spectrogramData = [];
+                        this.redraw();
+                    }
+                };
+                this.buttons.export.onclick = () => {
+                    const link = document.createElement('a');
+                    link.download = `spectrogram_${new Date().toISOString()}.png`;
+                    link.href = this.canvas.toDataURL();
+                    link.click();
+                };
+
+                this.canvas.onmousemove = (e) => this.showTooltip(e);
+                this.canvas.onmouseout = () => this.tooltip.style.display = 'none';
+            }
+
+            showTooltip(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (!this.spectrogramData.length) return;
+
+                const timeIndex = Math.floor(x / (this.canvas.width / this.spectrogramData.length));
+                const freqIndex = Math.floor(y / (this.canvas.height / this.spectrogramData[0].length));
+
+                if (this.spectrogramData[timeIndex]?.[freqIndex] !== undefined) {
+                    const value = this.spectrogramData[timeIndex][freqIndex];
+                    const freq = (freqIndex / this.spectrogramData[0].length) * (this.freqInfo?.freqMax || 20000);
+                    const db = -120 + (value * 120);
+
+                    this.tooltip.style.display = 'block';
+                    this.tooltip.style.left = `${e.clientX + 10}px`;
+                    this.tooltip.style.top = `${e.clientY + 10}px`;
+                    this.tooltip.innerHTML = `
+                        Frequency: ${freq.toFixed(1)} Hz<br>
+                        Magnitude: ${db.toFixed(1)} dB<br>
+                        Time: ${(timeIndex * 0.03).toFixed(2)}s
+                    `;
+                }
+            }
+
+            startRecording() {
+                this.isRecording = true;
+                this.buttons.start.disabled = true;
+                this.buttons.stop.disabled = false;
+                this.status.textContent = 'Status: Recording';
+                this.connectWebSocket();
+            }
+
+            stopRecording() {
+                this.isRecording = false;
+                this.buttons.start.disabled = false;
+                this.buttons.stop.disabled = true;
+                this.status.textContent = 'Status: Ready';
+                if (this.ws) {
+                    this.ws.close();
+                }
+            }
+
+            setupEventListeners() {
+                this.buttons.start.onclick = () => this.startRecording();
+                this.buttons.stop.onclick = () => this.stopRecording();
+                this.buttons.clear.onclick = () => {
+                    if (confirm('Clear spectrogram history?')) {
+                        this.spectrogramData = [];
+                        this.redraw();
+                    }
+                };
+                this.buttons.export.onclick = () => {
+                    const link = document.createElement('a');
+                    link.download = `spectrogram_${new Date().toISOString()}.png`;
+                    link.href = this.canvas.toDataURL();
+                    link.click();
+                };
+
+                this.canvas.onmousemove = (e) => this.showTooltip(e);
+                this.canvas.onmouseout = () => this.tooltip.style.display = 'none';
+            }
+
+            showTooltip(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                if (!this.spectrogramData.length) return;
+
+                const timeIndex = Math.floor(x / (this.canvas.width / this.spectrogramData.length));
+                const freqIndex = Math.floor(y / (this.canvas.height / this.spectrogramData[0].length));
+
+                if (this.spectrogramData[timeIndex]?.[freqIndex] !== undefined) {
+                    const value = this.spectrogramData[timeIndex][freqIndex];
+                    const freq = (freqIndex / this.spectrogramData[0].length) * (this.freqInfo?.freqMax || 20000);
+                    const db = -120 + (value * 120);  // Convert normalized value back to dB
+
+                    this.tooltip.style.display = 'block';
+                    this.tooltip.style.left = `${e.clientX + 10}px`;
+                    this.tooltip.style.top = `${e.clientY + 10}px`;
+                    this.tooltip.innerHTML = `
+                        Frequency: ${freq.toFixed(1)} Hz<br>
+                        Magnitude: ${db.toFixed(1)} dB<br>
+                        Time: ${(timeIndex * 0.03).toFixed(2)}s
+                    `;
+                }
+            }
+        }
+
+        // Initialize the application
+        const visualizer = new SpectrogramVisualizer();
+    </script>
+</body>
+</html>
