@@ -44,15 +44,16 @@ scipy
 
 ## Installation
 
-1. Clone the repository
+1. Create the folder and clone the repository
 ```bash
-git clone https://github.com/yourusername/realtime-spectrogram.git
-cd realtime-spectrogram
+mkdir audiopro
+git clone https://github.com/nachojeda/audiopro.git
+cd audiopro
 ```
 
 2. Install UV (if not already installed)
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+pip install uv
 ```
 
 3. Create and activate a virtual environment with UV
@@ -180,6 +181,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contact
 
-Your Name - [@yourusername](https://twitter.com/yourusername)
+Github Profile - [@nachojeda](https://github.com/nachojeda)
 
-Project Link: [https://github.com/yourusername/realtime-spectrogram](https://github.com/yourusername/realtime-spectrogram)
+Project Link - [AudioPro](https://github.com/nachojeda/audiopro)
